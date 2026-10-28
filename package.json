@@ -1,0 +1,10 @@
+{
+  "name": "app-services",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-service demo app for the local Kubernetes + ArgoCD lab",
+  "scripts": {
+    "test": "node --test tests/smoke.test.js"
+  },
+  "engines": { "node": ">=22" }
+}

@@ -1,0 +1,59 @@
+# Run the whole app on your machine WITHOUT Kubernetes (quick check of the code):
+#   docker compose up --build        then open http://localhost:8080
+x-service: &service
+  restart: unless-stopped
+  environment: &common-env
+    LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: labpassword
+      POSTGRES_DB: appdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d appdb"]
+      interval: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+
+  users-service:
+    <<: *service
+    build: { context: ., dockerfile: services/users-service/Dockerfile }
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://postgres:labpassword@postgres:5432/appdb
+      REDIS_URL: redis://redis:6379
+    depends_on: { postgres: { condition: service_healthy } }
+
+  payments-service:
+    <<: *service
+    build: { context: ., dockerfile: services/payments-service/Dockerfile }
+
+  orders-service:
+    <<: *service
+    build: { context: ., dockerfile: services/orders-service/Dockerfile }
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://postgres:labpassword@postgres:5432/appdb
+      USERS_URL: http://users-service:3001
+      PAYMENTS_URL: http://payments-service:3003
+    depends_on: { postgres: { condition: service_healthy } }
+
+  api-gateway:
+    <<: *service
+    build: { context: ., dockerfile: services/api-gateway/Dockerfile }
+    environment:
+      <<: *common-env
+      USERS_URL: http://users-service:3001
+      ORDERS_URL: http://orders-service:3002
+      PAYMENTS_URL: http://payments-service:3003
+
+  frontend:
+    <<: *service
+    build: { context: ., dockerfile: services/frontend/Dockerfile }
+    environment:
+      <<: *common-env
+      API_GATEWAY_URL: http://api-gateway:3000
+    ports: ["8080:8080"]

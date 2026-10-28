@@ -1,0 +1,9 @@
+{
+  "name": "orders-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "orders-service of the microservices lab",
+  "scripts": { "start": "node src/server.js" },
+  "engines": { "node": ">=22" },
+  "dependencies": { "pg": "^8.16.0" }
+}
