@@ -1,0 +1,99 @@
+name: ci
+
+# What happens on every push to main:
+#   1. test        - run the automatic checks
+#   2. build       - pack each service into a Docker image and push it to Docker Hub
+#   3. bump-gitops - write the new image tag into the gitops-config repo,
+#                    which is what ArgoCD watches
+#
+# One-time setup (GitHub repo -> Settings -> Secrets and variables -> Actions):
+#   DOCKERHUB_USERNAME   your Docker Hub user name
+#   DOCKERHUB_TOKEN      a Docker Hub access token (Account settings -> Personal access tokens)
+#   GITOPS_PAT           a GitHub personal access token that can push to gitops-config
+#                        (classic token with "repo" scope, or fine-grained with Contents: read/write)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  build:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, api-gateway, users-service, orders-service, payments-service]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Short commit id used as the image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  bump-gitops:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out gitops-config
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/gitops-config
+          token: ${{ secrets.GITOPS_PAT }}
+          ref: main
+      - name: Point every service at the new image tag
+        env:
+          TAG: ${{ github.sha }}
+        run: |
+          SHORT="${TAG::7}"
+          for f in environments/dev/*.yaml; do
+            sed -i -E "s|^(  tag: ).*|\1\"${SHORT}\"|" "$f"
+          done
+          git diff --stat
+      - name: Commit and push
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Nothing to change."
+            exit 0
+          fi
+          git commit -am "ci: deploy ${SHA::7} to dev"
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 3
+          done
+          exit 1
