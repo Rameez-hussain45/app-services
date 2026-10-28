@@ -66,6 +66,15 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - name: Debug token
+        env:
+          T: ${{ secrets.GITOPS_PAT }}
+        run: |
+          if [ -z "$T" ]; then echo "SECRET IS EMPTY"; else echo "secret length: ${#T}"; fi
+          curl -s -H "Authorization: Bearer $T" https://api.github.com/user | grep '"login"'
+          curl -s -o /dev/null -w "gitops-config API status: %{http_code}\n" \
+            -H "Authorization: Bearer $T" \
+            https://api.github.com/repos/${{ github.repository_owner }}/gitops-config
       - name: Check out gitops-config
         uses: actions/checkout@v4
         with:
